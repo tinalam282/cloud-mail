@@ -106,6 +106,7 @@ export async function email(message, env, ctx) {
 		const toName = email.to.find(item => item.address === message.to)?.name || '';
 		const code = await aiService.extractCode({ env }, email, { aiCode, aiCodeFilter });
 		const fromAddress = email.from?.address || '';
+		const authResults = parseAuthResults(email.headers);
 
 		const params = {
 			toEmail: message.to,
@@ -115,6 +116,9 @@ export async function email(message, env, ctx) {
 			senderEmail: message.from || '',
 			subject: email.subject,
 			code,
+			authSpf: authResults.authSpf,
+			authDkim: authResults.authDkim,
+			authDmarc: authResults.authDmarc,
 			content: email.html,
 			text: email.text,
 			cc: email.cc ? JSON.stringify(email.cc) : '[]',
@@ -204,8 +208,26 @@ export async function email(message, env, ctx) {
 	}
 }
 
-function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
+// 提取邮件认证结果（Authentication-Results 头，Cloudflare 入站投递时生成）。
+// 多转发链可能出现多个 AR 头：取最后一条（最贴近本实例入站）。
+// 同一头内同一键可能多次出现（如 CF 对 helo 与信封各查一次 SPF、多 DKIM 签名）：
+// dkim 按「任一签名 pass 即 pass」（多签名场景任一有效即证明真实性）；spf/dmarc 取 pass 优先，否则最后值。
+// 只保留结果值，不落原始头（避免接收服务器信息入库扩大泄露面）；无头或无法解析时为空串，视为无认证证据。
+function parseAuthResults(headers) {
+	const arList = (headers || [])
+		.filter(h => (h.key || '').toLowerCase() === 'authentication-results')
+		.map(h => h.value || '');
+	const ar = arList.length ? arList[arList.length - 1] : '';
+	const grab = (k) => {
+		const matches = [...ar.matchAll(new RegExp(k + '\\s*=\\s*([a-z0-9]+)', 'gi'))];
+		if (!matches.length) return '';
+		const values = matches.map(m => m[1].toLowerCase());
+		return values.includes('pass') ? 'pass' : values[values.length - 1];
+	};
+	return { authSpf: grab('spf'), authDkim: grab('dkim'), authDmarc: grab('dmarc') };
+}
 
+function checkBlock(blackSubjectStr, blackContentStr, blackFromStr, email) {
 	const blackFromList = blackFromStr ? blackFromStr.split(',') : []
 	const blackContentList = blackContentStr ? blackContentStr.split(',') : []
 	const blackSubjectList = blackSubjectStr ? blackSubjectStr.split(',') : []

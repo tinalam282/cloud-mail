@@ -34,8 +34,21 @@ const dbInit = {
 		await this.v3_3DB(c);
 		await this.v3_4DB(c);
 		await this.v3_5DB(c);
+		await this.v3_6DB(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async v3_6DB(c) {
+		try {
+			await c.env.db.batch([
+				c.env.db.prepare(`ALTER TABLE email ADD COLUMN auth_spf TEXT NOT NULL DEFAULT '';`),
+				c.env.db.prepare(`ALTER TABLE email ADD COLUMN auth_dkim TEXT NOT NULL DEFAULT '';`),
+				c.env.db.prepare(`ALTER TABLE email ADD COLUMN auth_dmarc TEXT NOT NULL DEFAULT '';`)
+			]);
+		} catch (e) {
+			console.warn(`跳过字段：${e.message}`);
+		}
 	},
 
 	async v3_5DB(c) {
